@@ -1,0 +1,46 @@
+# Check if running as administrator
+if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    # Prompt the user
+    $runAsAdmin = Read-Host "Would you like to run as admin? (yes/no)"
+    if ($runAsAdmin -match "y") {
+        # Relaunch as an admin
+        Start-Process powershell.exe "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+        exit
+    }
+}
+
+$t = '[DllImport("user32.dll")] public static extern bool ShowWindow(int handle, int state);'
+add-type -name win -member $t -namespace native
+[native.win]::ShowWindow(([System.Diagnostics.Process]::GetCurrentProcess() | Get-Process).MainWindowHandle, 0)
+
+# Get the current date and time
+$date = Get-Date -Format "yyyy MM-dd HHmm"
+
+# Define the file name
+$fileName = "$env:USERPROFILE\Downloads\gpresult $date.html"
+
+# Run gpresult and save the output to the file
+gpresult /H $fileName
+
+# Load the necessary .NET classes
+Add-Type -AssemblyName System.Windows.Forms
+$path = (Get-Process -id $pid).Path
+
+# Create a NotifyIcon object
+$notifyIcon = New-Object System.Windows.Forms.NotifyIcon
+$notifyIcon.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($path)
+$notifyIcon.Visible = $true
+
+# Add an event handler for the BalloonTipClicked event
+$notifyIcon.add_BalloonTipClicked({
+    Start-Process "$env:USERPROFILE\Downloads"
+    $notifyIcon.Visible = $false
+})
+
+# Show a balloon tip notification
+$notifyIcon.ShowBalloonTip(5000, 'GPResult has completed', 'Check your file in the Downloads folder', [System.Windows.Forms.ToolTipIcon]::Info)
+
+# Keep the script running until the balloon tip is clicked
+while ($notifyIcon.Visible) {
+    Start-Sleep -Seconds 1
+}
