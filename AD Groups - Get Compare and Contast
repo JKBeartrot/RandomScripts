@@ -1,0 +1,109 @@
+# Launch using this CMD script
+#@echo off
+#setlocal
+
+#:: Prompt for usernames
+#set /p usernames=To Search For User AD Groups, Enter The UPN(s) Separated By A Comma: 
+
+#:: Run the PowerShell script with the provided usernames
+#powershell -NoProfile -ExecutionPolicy Bypass -File ".\AD Groups - Get Compare Contrast.ps1" -userString "%usernames%"
+
+#endlocal
+#pause
+
+
+
+# Define the list of users
+param (
+    [string]$userString
+)
+
+# Split the string into an array
+$users = $userString -split ', '
+
+# Define the output directory
+$outputDir = "$env:USERPROFILE\Downloads"
+
+# Check if users exist
+$validUsers = @()
+foreach ($user in $users) {
+    try {
+        $null = Get-ADUser -Identity $user -ErrorAction Stop
+        $validUsers += $user
+    } catch {
+        Write-Host "Error: '$user' Could Not Be Found. Please Check The Spelling And Try Again" -ForegroundColor Red
+    }
+}
+
+
+# Function to get AD groups recursively
+function Get-ADGroupsRecursive {
+    param (
+        [string]$user
+    )
+    $groups = Get-ADUser -Identity $user -Properties MemberOf | Select-Object -ExpandProperty MemberOf
+    $allGroups = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($group in $groups) {
+        if ($group -notmatch "^CN=") { continue }
+        $allGroups.Add($group) | Out-Null
+        $nestedGroups = Get-NestedGroups -group $group
+        foreach ($nestedGroup in $nestedGroups) {
+            $allGroups.Add($nestedGroup) | Out-Null
+        }
+    }
+    return $allGroups
+}
+
+# Function to get nested groups
+function Get-NestedGroups {
+    param (
+        [string]$group
+    )
+    $nestedGroups = Get-ADGroup -Identity $group -Properties MemberOf | Select-Object -ExpandProperty MemberOf
+    $allNestedGroups = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($nestedGroup in $nestedGroups) {
+        if ($nestedGroup -notmatch "^CN=") { continue }
+        $allNestedGroups.Add($nestedGroup) | Out-Null
+        $nestedNestedGroups = Get-NestedGroups -group $nestedGroup
+        foreach ($nestedNestedGroup in $nestedNestedGroups) {
+            $allNestedGroups.Add($nestedNestedGroup) | Out-Null
+        }
+    }
+    return $allNestedGroups
+}
+
+# Initialize the comparison table
+$comparisonTable = @{}
+
+# Build the comparison table for all users first
+foreach ($user in $validUsers) {
+    $userGroups = Get-ADGroupsRecursive -user $user | Sort-Object
+    if ($userGroups) {
+        foreach ($group in $userGroups) {
+            $groupName = ($group -split ",")[0] -replace "^CN=", ""
+            if (-not $comparisonTable.ContainsKey($groupName)) {
+                $comparisonTable[$groupName] = @()
+            }
+            $comparisonTable[$groupName] += $user
+        }
+    }
+}
+
+# Process each user and generate CSV files
+foreach ($user in $validUsers) {
+    $userGroups = Get-ADGroupsRecursive -user $user | Sort-Object
+    if ($userGroups) {
+        $outputFileIndividual = "$outputDir\ADGroups_$user.csv"
+        $outputContentIndividual = @("User,Group,AlsoInThisGroup")
+
+        foreach ($group in $userGroups) {
+            $groupName = ($group -split ",")[0] -replace "^CN=", ""
+            $usersInGroup = $comparisonTable[$groupName] | Where-Object { $_ -ne $user }
+            $outputContentIndividual += "$user,$groupName,$($usersInGroup -join ';')"
+        }
+
+        $outputContentIndividual | Out-File -FilePath $outputFileIndividual -Encoding UTF8
+    }
+}
+
+Write-Host "Query Completed Successfully. Please Check Your Downloads Folder For The Resultant .CSV File(s)."
