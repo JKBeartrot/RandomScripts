@@ -1,0 +1,52 @@
+function Write-Log {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName = $true)]
+        [ValidateNotNullOrEmpty()]
+        [Alias("LogContent")]
+        [string]$Message,
+        [Parameter(Mandatory = $false)]
+        [ValidateSet("Error", "Warn", "Info")]
+        [string]$Level = "Info"
+    )
+
+    Begin { $VerbosePreference = 'Continue' }
+
+    Process {
+        #Define the log path  
+        [String]$logDir = "C:\Logs"
+        $scriptName = $global:scriptName
+        $logPath = "$logDir\$scriptName.log"
+
+        $formattedDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+        # Check for file size of the log, delete if greater than 5MB, and create if not present
+        if (Test-Path $logPath) { $logSize = (Get-Item -Path $logPath).Length / 1MB }
+        $MaxlogSize = 2
+        if ((Test-Path $logPath) -AND $logSize -gt $MaxlogSize) {
+            Write-Error "Log already exists and file exceeds maximum file size. Deleting the log and starting fresh."
+            Remove-Item $logPath -Force
+            $NewlogFile = New-Item $logPath -Force -ItemType File
+        }
+        elseif (-NOT (Test-Path $logPath)) { $NewlogFile = New-Item $logPath -Force -ItemType File }
+
+        # Write message to error, warning, or verbose pipeline and specify $LevelText
+        switch ($Level) {
+            'Error' {
+                Write-Error $Message
+                $LevelText = 'ERROR:'
+            }
+            'Warn' {
+                Write-Warning $Message
+                $LevelText = 'WARNING:'
+            }
+            'Info' {
+                Write-Verbose $Message
+                $LevelText = 'INFO:'
+            }
+        }
+
+        # Write log entry to ScheduledRestart.log
+        "$formattedDate $LevelText $Message" | Out-File -FilePath $logPath -Append
+    }
+}
